@@ -25,8 +25,8 @@ config = VitsConfig(
     epochs=1,
     print_step=1,
     print_eval=True,
-    compute_f0=True,
-    f0_cache_path="tests/data/ljspeech/f0_cache/",
+    compute_pitch=True,
+    f0_cache_path="tests/data/ljspeech/f0_cache7/",
     test_sentences=[
         ["Be a voice, not an echo.", "ljspeech-1", "tests/data/ljspeech/wavs/LJ001-0001.wav", None, None],
     ],

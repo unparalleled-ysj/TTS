@@ -189,7 +189,7 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
     spec = amp_to_db(spec)
     return spec
 
-def compute_f0(x: np.ndarray, sample_rate, hop_length, pitch_fmax=800.0) -> np.ndarray:
+def compute_pitch(x: np.ndarray, sample_rate, hop_length, pitch_fmax=800.0) -> np.ndarray:
     """Compute pitch (f0) of a waveform using the same parameters used for computing melspectrogram.
 
     Args:
@@ -217,8 +217,8 @@ def compute_f0(x: np.ndarray, sample_rate, hop_length, pitch_fmax=800.0) -> np.n
 
 class VITSF0Dataset(F0Dataset):
     def __init__(self, config, *args, **kwargs):
+        self.audio_config = config.audio
         super().__init__(*args, **kwargs)
-        self.config = config
     
     def compute_or_load(self, wav_file):
         """
@@ -226,15 +226,15 @@ class VITSF0Dataset(F0Dataset):
         """
         pitch_file = self.create_pitch_file_path(wav_file, self.cache_path)
         if not os.path.exists(pitch_file):
-            pitch = self._compute_and_save_pitch(wav_file, pitch_file)
+            pitch = self._compute_and_save_pitch(wav_file, self.audio_config.sample_rate, self.audio_config.hop_length, pitch_file)
         else:
             pitch = np.load(pitch_file)
         return pitch.astype(np.float32)
 
-    def _compute_and_save_pitch(self, wav_file, pitch_file=None):
-        print(wav_file, pitch_file)
+    @staticmethod
+    def _compute_and_save_pitch(wav_file, sample_rate, hop_length, pitch_file=None):
         wav, _ = load_audio(wav_file)
-        pitch = compute_f0(wav.squeeze().numpy(), self.config.audio.sample_rate, self.config.audio.hop_length)
+        pitch = compute_pitch(wav.squeeze().numpy(), sample_rate, hop_length)
         if pitch_file:
             np.save(pitch_file, pitch)
         return pitch
@@ -242,11 +242,14 @@ class VITSF0Dataset(F0Dataset):
 
 
 class VitsDataset(TTSDataset):
-    def __init__(self, config, *args, **kwargs):
+    def __init__(self, config, compute_pitch=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pad_id = self.tokenizer.characters.pad_id
+        self.compute_pitch = compute_pitch
+
         
-        self.f0_dataset = VITSF0Dataset(config,
+        if self.compute_pitch:
+            self.f0_dataset = VITSF0Dataset(config,
                 samples=self.samples, ap=self.ap, cache_path=self.f0_cache_path, precompute_num_workers=self.precompute_num_workers
             )
 
@@ -261,7 +264,7 @@ class VitsDataset(TTSDataset):
 
         # get f0 values
         f0 = None
-        if self.compute_f0:
+        if self.compute_pitch:
             f0 = self.get_f0(idx)["f0"]
 
         # after phonemization the text length may change
@@ -335,7 +338,7 @@ class VitsDataset(TTSDataset):
         
 
         # format F0
-        if self.compute_f0:
+        if self.compute_pitch:
             pitch = prepare_data(batch["pitch"])
             pitch = torch.FloatTensor(pitch)[:, None, :].contiguous() # B x 1 xT
         else:
@@ -1020,7 +1023,7 @@ class Vits(BaseTTS):
             x_mask,
             g=g_pp.detach() if self.args.detach_pp_input and g_pp is not None else g_pp
         )
-        print(o_pitch.shape, pitch.shape, dr.shape)
+
         avg_pitch = average_over_durations(pitch, dr.squeeze())
         o_pitch_emb = self.pitch_emb(avg_pitch)
         pitch_loss = torch.sum(torch.sum((o_pitch_emb - o_pitch) ** 2, [1, 2]) / torch.sum(x_mask))
@@ -1781,7 +1784,7 @@ class Vits(BaseTTS):
                 verbose=verbose,
                 tokenizer=self.tokenizer,
                 start_by_longest=config.start_by_longest,
-                compute_f0=config.get("compute_f0", False),
+                compute_pitch=config.get("compute_pitch", False),
                 f0_cache_path=config.get("f0_cache_path", None),
             )
 
